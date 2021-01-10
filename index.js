@@ -44,13 +44,17 @@ client.on('message', msg => {
         } else if (command === 'help') {
             commands.help(msg, client, args);
         } else if (command === 'setchannel' && checkadmin(msg.member)) {
-            commands.setchannel(msg, args);
+            commands.setchannel(msg, args, client);
         } else if (command === 'create' && checkadmin(msg.member)) {
             commands.create(msg);
         } else if (command === 'list') {
             commands.list(msg, args);
-        } else if (command === 'delete') {
+        } else if (command === 'delete' && checkadmin(msg.member)) {
             commands.delete(msg, args);
+        } else if (command === 'submit') {
+            commands.submit(msg, args, client);
+        } else if (command === 'end' && checkadmin(msg.member)) {
+            commands.end(msg, args, client);
         }
     }
 });

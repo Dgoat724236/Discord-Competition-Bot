@@ -8,6 +8,13 @@ const request = require("request")
 //const Canvas = require('canvas');
 //var sizeOf = require('image-size');
 
+const submissions = new Enmap({
+    name: 'submissions',
+    fetchAll: false,
+    autoFetch: true,
+    cloneLevel: 'deep'
+})
+
 const competitions = new Enmap({
     name: 'competitions',
     fetchAll: false,
@@ -15,9 +22,32 @@ const competitions = new Enmap({
     cloneLevel: 'deep'
 });
 
-let competitionlist = new Array();
-if (competitions.get("competitionlist")) {
-    competitionlist = competitions.get("competitionlist");
+let opencompetitionlist = new Array();
+let closedcompetitionlist = new Array();
+if (competitions.get("opencompetitionlist")) {
+    opencompetitionlist = competitions.get("opencompetitionlist");
+    var i;
+    for (i = 0; i < opencompetitionlist.length; i++) {
+        fs.readFile(`./data/competitions/${opencompetitionlist[i]}.json`, (err, data) => {
+            if (err) throw err;
+            let tempStartEmbedData = new Enmap();
+            tempStartEmbedData.import(data, true, false);
+            if (tempStartEmbedData.get("open")) {
+                tempStartEmbedData.clear();
+                return;
+            } else {
+                tempStartEmbedData.set("open", false);
+                var competitionCode = tempStartEmbedData.get("code")
+                let jsonexport = tempStartEmbedData.export();
+                fs.writeFile(`./data/competitions/${competitionCode}.json`, jsonexport, (err) => {
+                    if (err) throw err;
+                    closedcompetitionlist.push(competitionCode);
+                    opencompetitionlist.splice(i, 1);
+                    tempStartEmbedData.clear();
+                });
+            }
+        });
+    }
 }
 
 const download = (url, path, callback) => {
@@ -28,8 +58,22 @@ const download = (url, path, callback) => {
     })
 }
 
+const settings = new Enmap({
+    name: 'settings',
+    fetchAll: false,
+    autoFetch: true,
+    cloneLevel: 'deep'
+});
+
 function get_url_extension(url) {
     return url.split(/[#?]/)[0].split('.').pop().trim();
+}
+
+var submissionslist = new Array();
+var submissionliststorage = submissions.get("submissionlist")
+
+if (submissionliststorage != undefined) {
+    submissionslist = submissionliststorage;
 }
 
 module.exports = {
@@ -68,41 +112,36 @@ module.exports = {
             helpEmbed.setFooter('If I break, please make an issue on the GitHub!');
         };
 
-        msg.channel.send(helpEmbed);
+        msg.reply(helpEmbed);
     },
-    setchannel: async function (msg, args) {
-
-        const settings = new Enmap({
-            name: 'settings',
-            fetchAll: false,
-            autoFetch: true,
-            cloneLevel: 'deep'
-        });
+    setchannel: async function (msg, args, client) {
 
         var channel;
         settings.defer.then(() => {
             console.log(settings.size + " keys loaded");
-            if (args[0] != null) {
-                settings.set('channel', args[0]);
-                channel = settings.get('channel');
-                msg.channel.send('Submission channel set to ' + channel + '.');
+            if (args[0]) {
+                var channelMessage = args[0];
+                var channelId = channelMessage.replace("<#", "").replace(">", "")
+                var channel = client.channels.cache.get(channelId);
+                settings.set('channel', channel);
+                msg.reply('Submission channel set to <#' + channel.id + '>.');
             } else {
                 let filter = m => msg.author.id === m.author.id;
-                msg.channel.send('What channel would you like?').then(m => {
+                msg.reply('What channel would you like?').then(m => {
                     msg.channel.awaitMessages(filter, {
                         time: 60000,
                         max: 1,
                         errors: ['time']
+                    }).then(messages => {
+                        var channelMessage = messages.first().content;
+                        var channelId = channelMessage.replace("<#", "").replace(">", "")
+                        var channel = client.channels.cache.get(channelId);
+                        settings.set('channel', channel);
+                        msg.reply('Submission channel set to <#' + channel.id + '>.');
                     })
-                        .then(messages => {
-                            channelMessage = messages.first().content;
-                            settings.set('channel', channelMessage);
-                            channel = settings.get('channel');
-                            msg.channel.send('Submission channel set to ' + channel + '.');
-                        })
-                        .catch(() => {
-                            msg.channel.send(`No input received.`);
-                        });
+                    .catch(() => {
+                        msg.reply(`No input received.`);
+                    });
                 });
             }
         });
@@ -114,7 +153,7 @@ module.exports = {
 
         //Step 1: Get competition name
         let filter = m => msg.author.id === m.author.id;
-        msg.channel.send('What should the competition code be? ex. jan2021').then(m => {
+        msg.reply('What should the competition code be? ex. jan2021').then(m => {
             msg.channel.awaitMessages(filter, {
                 time: 60000,
                 max: 1,
@@ -127,20 +166,21 @@ module.exports = {
                     autoFetch: true,
                     cloneLevel: 'deep'
                 });
-                msg.channel.send('Competition ' + competitionCode + ' created!');
+                competition.set("code", competitionCode)
+                msg.reply('Competition ' + competitionCode + ' created!');
 
                 //Step 2
-                msg.channel.send('What should the competition description be?').then(m => {
+                msg.reply('What should the competition description be?').then(m => {
                     msg.channel.awaitMessages(filter, {
                         time: 60000,
                         max: 1,
                         errors: ['time']
                     }).then(messages => {
                         competition.set("description", messages.first().content);
-                        msg.channel.send('Description set as: ' + competition.get("description"));
+                        msg.reply('Description set as: ' + competition.get("description"));
 
                         //Step 3
-                        msg.channel.send('What should the base image be?').then(m => {
+                        msg.reply('What should the base image be?').then(m => {
                             msg.channel.awaitMessages(filter, {
                                 time: 60000,
                                 max: 1,
@@ -151,14 +191,17 @@ module.exports = {
                                     imageMessage.attachments.forEach(Attachment => {
                                         download(Attachment.url, `./data/images/` + `${competitionCode}.${get_url_extension(Attachment.url)}`, () => {
                                             competition.set("image", `./data/images/${competitionCode}.${get_url_extension(Attachment.url)}`);
-                                            msg.channel.send('Image received!');
+                                            msg.reply('Image received!');
+                                            competition.set("open", true)
+                                            competition.set("vote", false)
                                             let jsonexport = competition.export();
                                             fs.writeFile(`./data/competitions/${competitionCode}.json`, jsonexport, (err) => {
                                                 if (err) throw err;
                                                 console.log('The file has been saved!');
                                                 competition.clear();
-                                                competitionlist.push(competitionCode);
-                                                competitions.set("competitionlist", competitionlist)
+                                                opencompetitionlist.push(competitionCode);
+                                                competitions.set("opencompetitionlist", opencompetitionlist)
+                                                msg.reply(`Competition ${competitionCode} created!`)
                                             });
                                         });
                                     });
@@ -167,7 +210,7 @@ module.exports = {
                                 }
                             });
                         }).catch(() => {
-                            msg.channel.send('No input received.');
+                            msg.reply('No input received.');
                             console.log("step 3");;
                         });
                     });
@@ -184,29 +227,33 @@ module.exports = {
         var listAskEmbed = new Discord.MessageEmbed();
         var listInfoEmbed = new Discord.MessageEmbed();
 
-        if (args[0] && competitionlist.includes(args[0])) {
-            fs.readFile(`./data/competitions/${args[0]}.json`, (err, data) => {
+        function list(competition) {
+            fs.readFile(`./data/competitions/${competition}.json`, (err, data) => {
                 if (err) throw err;
-                let tempListEmbedDataEmpty = new Enmap();
-                tempListEmbedDataCompleted = tempListEmbedDataEmpty.import(data, true, false);
-                listInfoEmbed.setTitle(args[0]);
-                listInfoEmbed.setDescription(tempListEmbedDataCompleted.get("description"));
-                const attachment = new Discord.MessageAttachment(tempListEmbedDataCompleted.get("image"), 'image.png');
+                let tempListEmbedData = new Enmap();
+                tempListEmbedData.import(data, true, false);
+
+                listInfoEmbed.setTitle(competition);
+                listInfoEmbed.setDescription(tempListEmbedData.get("description"));
+                const attachment = new Discord.MessageAttachment(tempListEmbedData.get("image"), 'image.png');
                 listInfoEmbed.attachFiles(attachment);
                 listInfoEmbed.setImage('attachment://image.png');
                 listInfoEmbed.setTimestamp();
                 listInfoEmbed.setFooter('Submit by doing "' + config.prefix + 'submit [competitioncode]"')
                 msg.reply(listInfoEmbed);
-                tempListEmbedDataCompleted.clear();
-                tempListEmbedDataEmpty.clear();
+                tempListEmbedData.clear();
             });
+        }
+
+        if (args[0] && opencompetitionlist.includes(args[0])) {
+            list(args[0])
         } else {
             listAskEmbed.setTitle("Please type a competition code:");
             let listAskEmbedList = new String();
-            if (0 < competitionlist.length) {
+            if (0 < opencompetitionlist.length) {
                 var i;
-                for (i = 0; i < competitionlist.length; i++) {
-                    listAskEmbedList += `${i + 1}. ${competitionlist[i]}\n`;
+                for (i = 0; i < opencompetitionlist.length; i++) {
+                    listAskEmbedList += `${i + 1}. ${opencompetitionlist[i]}\n`;
                 }
                 listAskEmbed.setDescription(listAskEmbedList);
             } else {
@@ -214,59 +261,230 @@ module.exports = {
             }
 
             let filter = m => msg.author.id === m.author.id;
-            msg.channel.send(listAskEmbed).then(m => {
+            msg.reply(listAskEmbed).then(m => {
                 msg.channel.awaitMessages(filter, {
                     time: 60000,
                     max: 1,
                     errors: ['time']
                 }).then(messages => {
-                    if (competitionlist.includes(messages.first().content)) {
-                        fs.readFile(`./data/competitions/${messages.first().content}.json`, (err, data) => {
-                            if (err) throw err;
-                            let tempListEmbedDataEmpty = new Enmap();
-                            tempListEmbedDataCompleted = tempListEmbedDataEmpty.import(data, true, false);
-                            listInfoEmbed.setTitle(messages.first().content);
-                            listInfoEmbed.setDescription(tempListEmbedDataCompleted.get("description"));
-                            const attachment = new Discord.MessageAttachment(tempListEmbedDataCompleted.get("image"), 'image.png');
-                            listInfoEmbed.attachFiles(attachment);
-                            listInfoEmbed.setImage('attachment://image.png');
-                            listInfoEmbed.setTimestamp();
-                            listInfoEmbed.setFooter('Submit by doing "' + config.prefix + 'submit [competitioncode]"')
-                            msg.reply(listInfoEmbed);
-                            tempListEmbedDataCompleted.clear();
-                            tempListEmbedDataEmpty.clear();
-                        });
+                    if (opencompetitionlist.includes(messages.first().content)) {
+                        list(messages.first().content)
                     }
                 }).catch(() => {
-                    msg.channel.send(`No input received.`);
+                    msg.reply(`No input received.`);
                 });
             });
         }
     },
     delete: function (msg, args) {
-        if (args[0] && competitionlist.includes(args[0])) {
+        if (args[0] && opencompetitionlist.includes(args[0])) {
             var i;
-            for (i = 0; i < competitionlist.length; i++) {
-                if (args[0] === competitionlist[i]) {
-                    competitionlist.splice(i, 1);
-                    competitions.set("competitionlist", competitionlist);
+            for (i = 0; i < opencompetitionlist.length; i++) {
+                if (args[0] === opencompetitionlist[i]) {
+                    opencompetitionlist.splice(i, 1);
+                    competitions.set("opencompetitionlist", opencompetitionlist);
                     fs.readFile(`./data/competitions/${args[0]}.json`, (err, data) => {
                         if (err) throw err;
-                        let tempDelDataEmpty = new Enmap();
-                        tempDelDataCompleted = tempDelDataEmpty.import(data, true, false);
+                        let tempDelData = new Enmap();
+                        tempDelData.import(data, true, false);
                         fs.rmSync(`./data/competitions/${args[0]}.json`);
-                        fs.rmSync(tempDelDataCompleted.get("image"));
-                        tempDelDataCompleted.clear();
-                        tempDelDataEmpty.clear();
+                        fs.rmSync(tempDelData.get("image"));
+                        tempDelData.clear();
                         msg.reply(`${args[0]} deleted.`)
                     });
                 } else {
                     i++;
                 }
             }
-
         } else {
             msg.reply('Please specify a valid competition code.')
+        }
+    },
+    submit: async function (msg, args, client) {
+        
+        var botMsg;
+        var submitAskEmbed = new Discord.MessageEmbed();
+
+        function submit(competition) {
+            let filter = m => msg.author.id === m.author.id;
+            msg.reply("Please send your submission, along with a brief description.").then(m => {
+                botMsg = m;
+                msg.channel.awaitMessages(filter, {
+                    time: 60000,
+                    max: 1,
+                    errors: ['time']
+                }).then(messages => {
+                    submissionMessage = messages.first()
+                    if (submissionMessage.attachments.size > 0) {
+                        submissionMessage.attachments.forEach(Attachment => {
+                            let submissionId;
+                            do {
+                                submissionId = Math.floor(1000 + Math.random() * 9000);
+                            } while (fs.existsSync(`./data/images/${submissionId}.${get_url_extension(Attachment.url)}`));
+
+                            submissionId = String(submissionId);
+
+                            download(Attachment.url, `./data/images/${submissionId}.${get_url_extension(Attachment.url)}`, () => {
+                                let submissionProperties = new Map();
+                                submissionProperties.set("code", competition)
+                                submissionProperties.set("id", submissionId)
+                                submissionProperties.set("image", `./data/images/${submissionId}.${get_url_extension(Attachment.url)}`)
+                                submissionProperties.set("user", submissionMessage.author)
+                                submissionProperties.set("time", submissionMessage.createdAt)
+                                submissionProperties.set("description", submissionMessage.content)
+
+                                var submissionEmbed = new Discord.MessageEmbed();
+
+                                submissionEmbed.setAuthor(submissionProperties.get("user").username, submissionProperties.get("user").avatarURL());
+                                submissionEmbed.setTitle(`${submissionProperties.get("code")}: submission #${submissionProperties.get("id")}`);
+                                submissionEmbed.setDescription(submissionProperties.get("description"));
+                                const attachment = new Discord.MessageAttachment(submissionProperties.get("image"), 'image.png');
+                                submissionEmbed.attachFiles(attachment);
+                                submissionEmbed.setImage('attachment://image.png');
+                                submissionEmbed.setTimestamp(submissionProperties.get("time"));
+
+                                var channel = settings.get('channel');
+                                var submissionChannel = client.channels.cache.get(channel.id);
+                                submissionChannel.send(submissionEmbed).then(m => {
+                                    saveMsg = m;
+                                    submissionProperties.set("message", saveMsg);
+                                    console.log(submissionProperties.get("message"))
+                                    submissions.set(submissionId, submissionProperties)
+                                });
+
+                                if (submissionliststorage === undefined) {
+                                    submissionslist.push(submissionId)
+                                    submissions.set("submissionlist", submissionslist)
+                                } else {
+                                    submissionslist = submissionliststorage;
+                                    submissionslist.push(submissionId)
+                                    submissions.set("submissionlist", submissionslist)
+                                }
+
+                                botMsg.delete();
+                                submissionMessage.delete();
+                                msg.reply(`Submission received! Your submission ID is: #${submissionProperties.get("id")}`)
+                            });
+                        });
+                    } else {
+                        msg.reply('Please submit a valid image.')
+                    }
+                });
+            });
+        }
+
+        if (args[0] && opencompetitionlist.includes(args[0])) {
+            submit(args[0], )
+        } else {
+            submitAskEmbed.setTitle("Please type a competition code:");
+            let submitAskEmbedList = new String();
+            if (0 < opencompetitionlist.length) {
+                var i;
+                for (i = 0; i < opencompetitionlist.length; i++) {
+                    submitAskEmbedList += `${i + 1}. ${opencompetitionlist[i]}\n`;
+                }
+                submitAskEmbed.setDescription(submitAskEmbedList);
+            } else {
+                submitAskEmbed.setDescription('No competitions available!');
+            }
+
+            let filter = m => msg.author.id === m.author.id;
+            msg.reply(submitAskEmbed).then(m => {
+                msg.channel.awaitMessages(filter, {
+                    time: 60000,
+                    max: 1,
+                    errors: ['time']
+                }).then(messages => {
+                    if (opencompetitionlist.includes(messages.first().content)) {
+                        submit(messages.first().content)
+                    } else {
+                        msg.reply("Please submit a valid code.")
+                    }
+                });
+            });
+        }
+    },
+    end: function (msg, args, client) {
+        var endAskEmbed = new Discord.MessageEmbed();
+
+        function end(competition) {
+            fs.readFile(`./data/competitions/${competition}.json`, (err, data) => {
+                if (err) throw err;
+                let tempEndData = new Enmap({ name: competition });
+                tempEndData.import(data, true, false);
+                tempEndData.set("open", false)
+                tempEndData.set("vote", true)
+                let jsonexport = tempEndData.export();
+                console.log(jsonexport);
+                fs.writeFile(`./data/competitions/${competition}.json`, jsonexport, (err) => {
+                    if (err) throw err;
+                    console.log('The file has been saved!');
+                    tempEndData.clear();
+                });
+                for (i = 0; i < opencompetitionlist.length; i++) {
+                    if (competition === opencompetitionlist[i]) {
+                        opencompetitionlist.splice(i, 1);
+                        closedcompetitionlist.push(competition);
+                        console.log("Successfully ended!")
+                    } else {
+                        i++;
+                    }
+                }
+
+                var endEmbed = new Discord.MessageEmbed();
+
+                //Get submissions and make into jumpable list
+                var endEmbedFieldList = new String();
+                for (i = 0; i < submissionslist.length; i++) {
+                    var submissionCompetition = submissions.get(submissionslist[i]);
+                    if (submissionCompetition.get('code') === competition) {
+                        endEmbedFieldList += `${submissionCompetition.get("id")} [Jump!](https://discord.com/channels/${submissionCompetition.get("message").guild.id}/${submissionCompetition.get("message").channel.id}/${submissionCompetition.get("message").id})\n`
+                        console.log(endEmbedFieldList);
+                    }
+                }
+
+                endEmbed.setTitle(`${competition} has ended!`);
+                endEmbed.setDescription("Please look at the submissions and decide on your favorite.");
+                endEmbed.addField("List of submissions", endEmbedFieldList);
+                endEmbed.setTimestamp();
+                endEmbed.setFooter('Vote by doing "' + config.prefix + 'vote [competitioncode]"')
+
+                var channel = settings.get('channel');
+                var submissionChannel = client.channels.cache.get(channel.id);
+
+                submissionChannel.send(endEmbed);
+            });
+        }
+
+        if (args[0] && opencompetitionlist.includes(args[0])) {
+            end(args[0]);
+        } else {
+            endAskEmbed.setTitle("Please type a competition code:");
+            let endAskEmbedList = new String();
+            if (0 < opencompetitionlist.length) {
+                var i;
+                for (i = 0; i < opencompetitionlist.length; i++) {
+                    endAskEmbedList += `${i + 1}. ${opencompetitionlist[i]}\n`;
+                }
+                endAskEmbed.setDescription(endAskEmbedList);
+            } else {
+                endAskEmbed.setDescription('No competitions available!');
+            }
+
+            let filter = m => msg.author.id === m.author.id;
+            msg.reply(endAskEmbed).then(m => {
+                msg.channel.awaitMessages(filter, {
+                    time: 60000,
+                    max: 1,
+                    errors: ['time']
+                }).then(messages => {
+                    if (opencompetitionlist.includes(messages.first().content)) {
+                        end(messages.first().content);
+                    } else {
+                        msg.reply("Please submit a valid code.")
+                    }
+                });
+            });
         }
     }
 }
@@ -315,7 +533,7 @@ module.exports = {
             helpEmbed.setTimestamp();
             helpEmbed.setFooter('If I break, please make an issue on the GitHub!');
         }
-        msg.channel.send(helpEmbed);
+        msg.reply(helpEmbed);
     },
     meme: function (msg, client, handler, args) {
 
